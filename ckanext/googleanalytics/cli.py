@@ -14,7 +14,7 @@ from . import dbutil, config
 log = logging.getLogger(__name__)
 PACKAGE_URL = "/dataset/"  # XXX get from routes...
 
-DATASET_URL_REGEX =  re.compile("/dataset/([a-z0-9-_]+)")
+DATASET_URL_REGEX = re.compile("^/dataset/([a-z0-9-_]+)$")
 RESOURCE_URL_REGEX = re.compile("/dataset/[a-z0-9-_]+/resource/([a-z0-9-_]+)")
 DATASET_EDIT_REGEX = re.compile("/dataset/edit/([a-z0-9-_]+)")
 
@@ -38,40 +38,50 @@ def init():
 
 
 @googleanalytics.command(short_help=u"Load data from Google Analytics API")
-@click.argument("credentials", type=click.Path(exists=True), required=False)
-@click.option("-ga4", "--ga4", required=False, is_flag=True)
+@click.argument("credentials", type=click.Path(exists=True))
 @click.option("-s", "--start-date", required=False)
-def load(credentials, ga4, start_date):
+@click.option("-ga4", "--ga4", required=False, is_flag=True)
+def load(credentials, start_date, ga4):
     """Parse data from Google Analytics API and store it
     in a local database
     """
-    from .ga_auth import init_service, get_ga4_client, get_profile_id
+    if not ga4:
+        from .ga_auth import init_service, get_profile_id
 
-    try:
-        service = get_ga4_client() if ga4 else init_service(credentials)
-    except TypeError as e:
-        raise Exception("Unable to create a service: {0}".format(e))
-    profile_id = tk.config.get("googleanalytics.property_id") if ga4 else get_profile_id(service)
-    if not profile_id:
-        tk.error_shout("Unknown Profile ID. `googleanalytics.id`,\
-                       `googleanalytics.property_id` or \
-                       `googleanalytics.account` must be specified")
-        raise click.Abort()
-    if start_date:
-        bulk_import(service, profile_id, start_date, ga4)
-    elif ga4:
-        packages_data = get_ga4_data(service, profile_id)
+        try:
+            service = init_service(credentials)
+        except TypeError as e:
+            raise Exception("Unable to create a service: {0}".format(e))
+        profile_id = get_profile_id(service)
+        if not profile_id:
+            tk.error_shout("Unknown Profile ID. `googleanalytics.profile_id` or `googleanalytics.account` must be specified")
+            raise click.Abort()
+        if start_date:
+            bulk_import(service, profile_id, start_date)
+        else:
+            query = "ga:pagePath=~%s,ga:pagePath=~%s" % (
+                PACKAGE_URL,
+                config.prefix(),
+            )
+            packages_data = get_ga_data(service, profile_id, query_filter=query)
+            save_ga_data(packages_data)
+            log.info("Saved %s records from google" % len(packages_data))
+
+    else:
+        from .ga_auth import get_ga4_client
+        try:
+            client = get_ga4_client(credentials)
+        except TypeError as e:
+            raise Exception("Unable to create a client: {0}".format(e))
+        
+        property_id = tk.config.get("googleanalytics.property_id")
+        if not property_id:
+            tk.error_shout("Unknown Property ID. `googleanalytics.property_id`")
+            raise click.Abort()
+
+        packages_data = get_ga4_data(client, property_id)
         save_ga4_data(packages_data)
         log.info("Saved %s records from google" % len(packages_data))
-    else:
-        query = "ga:pagePath=~%s,ga:pagePath=~%s" % (
-            PACKAGE_URL,
-            config.prefix(),
-        )
-        packages_data = get_ga_data(service, profile_id, query_filter=query)
-        save_ga_data(packages_data)
-        log.info("Saved %s records from google" % len(packages_data))
-
 
 ###############################################################################
 #                                     xxx                                     #
@@ -157,9 +167,9 @@ def internal_save(packages_data, summary_date):
     engine.execute(sql, config.recent_view_days())
 
 
-def bulk_import(service, profile_id, start_date=None, ga4=False):
+def bulk_import(service, profile_id, start_date=None):
     if start_date:
-        # Get summeries from specified date
+        # Get summaries from specified date
         start_date = datetime.datetime.strptime(start_date, "%Y-%m-%d")
     else:
         # No date given. See when we last have data for and get data
@@ -181,7 +191,7 @@ def bulk_import(service, profile_id, start_date=None, ga4=False):
     while start_date < end_date:
         stop_date = start_date + datetime.timedelta(1)
         packages_data = get_ga_data_new(
-            service, profile_id, start_date=start_date, end_date=stop_date,ga4=ga4
+            service, profile_id, start_date=start_date, end_date=stop_date
         )
         internal_save(packages_data, start_date)
         # sleep to rate limit requests
@@ -191,7 +201,7 @@ def bulk_import(service, profile_id, start_date=None, ga4=False):
         print("%s received %s" % (len(packages_data), start_date))
 
 
-def get_ga_data_new(service, profile_id, start_date=None, end_date=None, ga4=False):
+def get_ga_data_new(service, profile_id, start_date=None, end_date=None):
     """Get raw data from Google Analytics for packages and
     resources.
 
@@ -212,7 +222,7 @@ def get_ga_data_new(service, profile_id, start_date=None, end_date=None, ga4=Fal
 
     start_index = 1
     max_results = 10000
-    # data retrival is chunked
+    # data retrieval is chunked
     completed = False
     while not completed:
         results = (
@@ -253,14 +263,15 @@ def save_ga4_data(packages):
         recently = visits.get("recent", 0)
         ever = visits.get("ever", 0)
         package_name = identifier[len(PACKAGE_URL):]
-        matches = RESOURCE_URL_REGEX.match(identifier)
-        if matches:
-            resource_url = matches[0]
+        resource_matches = RESOURCE_URL_REGEX.match(identifier)
+        dataset_matches = DATASET_URL_REGEX.match(identifier)
+        if resource_matches:
+            resource_url = resource_matches[0]
             resource = model.Resource.get(resource_url)
             resource = (
                 model.Session.query(model.Resource)
                 .autoflush(True)
-                .filter_by(id=matches.group(1))
+                .filter_by(id=resource_matches.group(1))
                 .first()
             )
             if not resource:
@@ -268,16 +279,16 @@ def save_ga4_data(packages):
                 continue
             dbutil.update_resource_visits(resource.id, recently, ever)
             log.info("Updated %s with %s visits" % (resource.id, visits))
-        else:
-            if "/" in package_name:
-                log.warning("%s not a valid package name" % package_name)
-                continue
+        elif dataset_matches:
             item = model.Package.by_name(package_name)
             if not item:
                 log.warning("Couldn't find package %s" % package_name)
                 continue
             dbutil.update_package_visits(item.id, recently, ever)
             log.info("Updated %s with %s visits" % (item.id, visits))
+        else:
+            log.warning(f"No matches for identifier {identifier}")
+            continue
     model.Session.commit()
 
 
@@ -314,7 +325,7 @@ def save_ga_data(packages_data):
     model.Session.commit()
 
 
-def ga4_query(service, profile_id, from_date=None):
+def ga4_query(client, property_id, from_date=None):
     """Execute a query against Google Analytics 4"""
     from google.analytics.data_v1beta.types import (
         DateRange,
@@ -328,24 +339,25 @@ def ga4_query(service, profile_id, from_date=None):
     to_date = now.strftime("%Y-%m-%d")
     if isinstance(from_date, datetime.date):
         from_date = from_date.strftime("%Y-%m-%d")
-
+    # TODO: Make the metrics a CKAN config option which defaults to engagedSessions 
     metrics = [
         Metric(name="engagedSessions"),
     ]
     request = RunReportRequest(
-        property="properties/{0}".format(profile_id),
+        property="properties/{0}".format(property_id),
+        # TODO: Make the dimensions a CKAN config option which defaults to pagePathPlusQueryString
         dimensions=[Dimension(name="pagePathPlusQueryString")],
         dimension_filter=FilterExpression(
             filter=Filter(
                 field_name="pagePathPlusQueryString",
                 string_filter=Filter.StringFilter(
-                    value="/dataset/", match_type=Filter.StringFilter.MatchType.BEGINS_WITH)
+                    value=PACKAGE_URL, match_type=Filter.StringFilter.MatchType.BEGINS_WITH)
             )
         ),
         metrics=metrics,
         date_ranges=[DateRange(start_date=from_date, end_date=to_date)],
     )
-    response = service.run_report(request)
+    response = client.run_report(request)
     return response
 
 
@@ -386,20 +398,21 @@ def ga_query(
     return results
 
 
-def get_ga4_data(service, profile_id):
+def get_ga4_data(client, property_id):
     """Get raw data from Google Analytics 4 for packages"""
 
     now = datetime.datetime.now()
     recent_date = now - datetime.timedelta(config.recent_view_days())
     recent_date = recent_date.strftime("%Y-%m-%d")
-    floor_date = datetime.date(2005, 1, 1)
+    # TODO: Make this configurable. For some reason no data is returned for DataNT when the date is earlier than 2021-02-01
+    floor_date = datetime.date(2021, 2, 1)
     packages = {}
     dates = {"recent": recent_date, "ever": floor_date}
     for date_name, date in list(dates.items()):
 
         response = ga4_query(
-            service,
-            profile_id,
+            client,
+            property_id,
             from_date=date)
         for row in response.rows:
             package = row.dimension_values[0].value
@@ -414,7 +427,7 @@ def get_ga4_data(service, profile_id):
 
 
 def get_ga_data(service, profile_id, query_filter):
-    """Get raw data from Google Analtyics for packages and
+    """Get raw data from Google Analytics for packages and
     resources, and for both the last two weeks and ever.
 
     Returns a dictionary like::

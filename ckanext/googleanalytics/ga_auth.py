@@ -1,20 +1,8 @@
-import os
-
 from apiclient.discovery import build
 from oauth2client.service_account import ServiceAccountCredentials
 
 from ckanext.googleanalytics import utils, config
 from google.analytics.data_v1beta import BetaAnalyticsDataClient
-from google.analytics.data_v1beta.types import (
-    DateRange,
-    Dimension,
-    Metric,
-    RunReportRequest,
-)
-from google.analytics.admin import AnalyticsAdminServiceClient
-
-
-from google_auth_oauthlib import flow
 
 
 def init_service(credentials_file):
@@ -23,10 +11,10 @@ def init_service(credentials_file):
     credentials = ServiceAccountCredentials.from_json_keyfile_name(
         credentials_file, scopes=scope
     )
+
     return build("analytics", "v3", credentials=credentials)
 
-def get_ga4_client():
-    credentials_json_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+def get_ga4_client(credentials_json_path):
     return BetaAnalyticsDataClient.from_service_account_json(credentials_json_path)
 
 def get_profile_id(service):
@@ -44,8 +32,8 @@ def get_profile_id(service):
     profile_id = config.profile_id()
     if profile_id:
         return profile_id
-    client = AnalyticsAdminServiceClient()
-    accounts = client.list_accounts()
+
+    accounts = service.management().accounts().list().execute()
 
     if not accounts.get("items"):
         return None
