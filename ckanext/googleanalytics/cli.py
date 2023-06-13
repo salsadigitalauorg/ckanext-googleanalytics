@@ -73,7 +73,7 @@ def load(credentials, start_date, ga4):
             client = get_ga4_client(credentials)
         except TypeError as e:
             raise Exception("Unable to create a client: {0}".format(e))
-        
+
         property_id = tk.config.get("googleanalytics.property_id")
         if not property_id:
             tk.error_shout("Unknown Property ID. `googleanalytics.property_id`")
@@ -334,12 +334,12 @@ def ga4_query(client, property_id, from_date=None):
         RunReportRequest,
         FilterExpression,
         Filter
-        )
+    )
     now = datetime.datetime.now()
     to_date = now.strftime("%Y-%m-%d")
     if isinstance(from_date, datetime.date):
         from_date = from_date.strftime("%Y-%m-%d")
-    # TODO: Make the metrics a CKAN config option which defaults to engagedSessions 
+    # TODO: Make the metrics a CKAN config option which defaults to engagedSessions
     metrics = [
         Metric(name="engagedSessions"),
     ]
@@ -417,7 +417,7 @@ def get_ga4_data(client, property_id):
         for row in response.rows:
             package = row.dimension_values[0].value
             count = row.metric_values[0].value
-            val = 0 
+            val = 0
             if package in packages and date_name in packages[package]:
                 val += packages[package][date_name]
             packages.setdefault(package, {})[date_name] = (
