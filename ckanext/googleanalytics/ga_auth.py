@@ -2,6 +2,7 @@ from apiclient.discovery import build
 from oauth2client.service_account import ServiceAccountCredentials
 
 from ckanext.googleanalytics import utils, config
+from google.analytics.data_v1beta import BetaAnalyticsDataClient
 
 
 def init_service(credentials_file):
@@ -13,6 +14,8 @@ def init_service(credentials_file):
 
     return build("analytics", "v3", credentials=credentials)
 
+def get_ga4_client(credentials_json_path):
+    return BetaAnalyticsDataClient.from_service_account_json(credentials_json_path)
 
 def get_profile_id(service):
     """Get static profile ID or fetch one from the service.
