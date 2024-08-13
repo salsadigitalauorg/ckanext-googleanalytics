@@ -1,7 +1,7 @@
 from apiclient.discovery import build
 from oauth2client.service_account import ServiceAccountCredentials
 
-from ckanext.googleanalytics import utils, config
+from ckanext.googleanalytics import config
 from google.analytics.data_v1beta import BetaAnalyticsDataClient
 
 
