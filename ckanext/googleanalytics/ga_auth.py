@@ -14,8 +14,10 @@ def init_service(credentials_file):
 
     return build("analytics", "v3", credentials=credentials)
 
+
 def get_ga4_client(credentials_json_path):
     return BetaAnalyticsDataClient.from_service_account_json(credentials_json_path)
+
 
 def get_profile_id(service):
     """Get static profile ID or fetch one from the service.
